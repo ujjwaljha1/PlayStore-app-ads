@@ -1,0 +1,557 @@
+// lib/main.dart
+import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await MobileAds.instance.initialize();
+  runApp(const MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Reward App',
+      theme: ThemeData(primarySwatch: Colors.blue),
+      home: const SplashScreen(),
+    );
+  }
+}
+
+class SplashScreen extends StatefulWidget {
+  const SplashScreen({Key? key}) : super(key: key);
+
+  @override
+  State<SplashScreen> createState() => _SplashScreenState();
+}
+
+class _SplashScreenState extends State<SplashScreen> {
+  @override
+  void initState() {
+    super.initState();
+    _checkAuth();
+  }
+
+  Future<void> _checkAuth() async {
+    const storage = FlutterSecureStorage();
+    final token = await storage.read(key: 'token');
+    
+    await Future.delayed(const Duration(seconds: 2));
+    
+    if (mounted) {
+      if (token != null) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const DashboardScreen())
+        );
+      } else {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const WelcomeScreen())
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            FlutterLogo(size: 100),
+            SizedBox(height: 20),
+            CircularProgressIndicator(),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class WelcomeScreen extends StatefulWidget {
+  const WelcomeScreen({Key? key}) : super(key: key);
+
+  @override
+  State<WelcomeScreen> createState() => _WelcomeScreenState();
+}
+
+class _WelcomeScreenState extends State<WelcomeScreen> {
+  final PageController _pageController = PageController();
+  int _currentPage = 0;
+
+  final List<Map<String, String>> _welcomeData = [
+    {
+      'title': 'Welcome to Reward App',
+      'description': 'Earn rewards by watching ads',
+    },
+    {
+      'title': 'Invite Friends',
+      'description': 'Get bonus coins for referrals',
+    },
+    {
+      'title': 'Track Progress',
+      'description': 'See your ranking on the leaderboard',
+    },
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Stack(
+        children: [
+          PageView.builder(
+            controller: _pageController,
+            onPageChanged: (int page) {
+              setState(() => _currentPage = page);
+            },
+            itemCount: _welcomeData.length,
+            itemBuilder: (context, index) {
+              return Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const FlutterLogo(size: 100),
+                  const SizedBox(height: 50),
+                  Text(
+                    _welcomeData[index]['title']!,
+                    style: const TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Text(_welcomeData[index]['description']!),
+                ],
+              );
+            },
+          ),
+          Positioned(
+            bottom: 50,
+            left: 0,
+            right: 0,
+            child: Column(
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: List.generate(
+                    _welcomeData.length,
+                    (index) => Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 5),
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: _currentPage == index
+                            ? Theme.of(context).primaryColor
+                            : Colors.grey,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 30),
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(context).pushReplacement(
+                      MaterialPageRoute(builder: (_) => const AuthScreen())
+                    );
+                  },
+                  child: const Text('Get Started'),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class AuthScreen extends StatefulWidget {
+  const AuthScreen({Key? key}) : super(key: key);
+
+  @override
+  State<AuthScreen> createState() => _AuthScreenState();
+}
+
+class _AuthScreenState extends State<AuthScreen> {
+  bool _isLogin = true;
+  final _formKey = GlobalKey<FormState>();
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _referralController = TextEditingController();
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    try {
+      final url = _isLogin ? '/api/login' : '/api/register';
+      final response = await http.post(
+        Uri.parse('https://testing-ads-production.up.railway.app$url'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'email': _emailController.text,
+          'password': _passwordController.text,
+          if (!_isLogin && _referralController.text.isNotEmpty)
+            'referralCode': _referralController.text,
+        }),
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final data = jsonDecode(response.body);
+        const storage = FlutterSecureStorage();
+        await storage.write(key: 'token', value: data['token']);
+        
+        if (mounted) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const DashboardScreen())
+          );
+        }
+      } else {
+        throw Exception('Authentication failed');
+      }
+    } catch (error) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.toString()))
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(_isLogin ? 'Login' : 'Sign Up')),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            children: [
+              TextFormField(
+                controller: _emailController,
+                decoration: const InputDecoration(labelText: 'Email'),
+                validator: (value) =>
+                    value?.isEmpty ?? true ? 'Please enter email' : null,
+              ),
+              TextFormField(
+                controller: _passwordController,
+                decoration: const InputDecoration(labelText: 'Password'),
+                obscureText: true,
+                validator: (value) =>
+                    value?.isEmpty ?? true ? 'Please enter password' : null,
+              ),
+              if (!_isLogin)
+                TextFormField(
+                  controller: _referralController,
+                  decoration: const InputDecoration(labelText: 'Referral Code (Optional)'),
+                ),
+              const SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: _submit,
+                child: Text(_isLogin ? 'Login' : 'Sign Up'),
+              ),
+              TextButton(
+                onPressed: () => setState(() => _isLogin = !_isLogin),
+                child: Text(_isLogin
+                    ? 'Don\'t have an account? Sign Up'
+                    : 'Already have an account? Login'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class DashboardScreen extends StatefulWidget {
+  const DashboardScreen({Key? key}) : super(key: key);
+
+  @override
+  State<DashboardScreen> createState() => _DashboardScreenState();
+}
+
+class _DashboardScreenState extends State<DashboardScreen> {
+  BannerAd? _bannerAd;
+  RewardedAd? _rewardedAd;
+  int _coins = 0;
+  List<Map<String, dynamic>> _notifications = [];
+  List<Map<String, dynamic>> _leaderboard = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadBannerAd();
+    _loadRewardedAd();
+    _loadUserData();
+    _loadLeaderboard();
+    _loadNotifications();
+  }
+
+  void _loadBannerAd() {
+    _bannerAd = BannerAd(
+      adUnitId: 'ca-app-pub-3940256099942544/6300978111', // Test ad unit ID
+      size: AdSize.banner,
+      request: const AdRequest(),
+      listener: BannerAdListener(
+        onAdLoaded: (_) => setState(() {}),
+        onAdFailedToLoad: (ad, error) => ad.dispose(),
+      ),
+    )..load();
+  }
+
+  void _loadRewardedAd() {
+    RewardedAd.load(
+      adUnitId: 'ca-app-pub-3940256099942544/5224354917', // Test ad unit ID
+      request: const AdRequest(),
+      rewardedAdLoadCallback: RewardedAdLoadCallback(
+        onAdLoaded: (ad) => _rewardedAd = ad,
+        onAdFailedToLoad: (error) => _loadRewardedAd(),
+      ),
+    );
+  }
+
+  Future<void> _loadUserData() async {
+    try {
+      const storage = FlutterSecureStorage();
+      final token = await storage.read(key: 'token');
+      
+      final response = await http.get(
+        Uri.parse('https://testing-ads-production.up.railway.app/api/user'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        setState(() => _coins = data['coins']);
+      }
+    } catch (error) {
+      print('Error loading user data: $error');
+    }
+  }
+
+  Future<void> _loadLeaderboard() async {
+    try {
+      final response = await http.get(
+        Uri.parse('https://testing-ads-production.up.railway.app/api/leaderboard'),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        setState(() => _leaderboard = List<Map<String, dynamic>>.from(data));
+      }
+    } catch (error) {
+      print('Error loading leaderboard: $error');
+    }
+  }
+
+  Future<void> _loadNotifications() async {
+    try {
+      const storage = FlutterSecureStorage();
+      final token = await storage.read(key: 'token');
+      
+      final response = await http.get(
+        Uri.parse('https://testing-ads-production.up.railway.app/api/notifications'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        setState(() => _notifications = List<Map<String, dynamic>>.from(data));
+      }
+    } catch (error) {
+      print('Error loading notifications: $error');
+    }
+  }
+
+  void _showRewardedAd() {
+    if (_rewardedAd == null) return;
+
+    _rewardedAd!.fullScreenContentCallback = FullScreenContentCallback(
+      onAdDismissedFullScreenContent: (ad) {
+        ad.dispose();
+        _loadRewardedAd();
+      },
+      onAdFailedToShowFullScreenContent: (ad, error) {
+        ad.dispose();
+        _loadRewardedAd();
+      },
+    );
+
+    _rewardedAd!.show(
+      onUserEarnedReward: (_, reward) async {
+        try {
+          const storage = FlutterSecureStorage();
+          final token = await storage.read(key: 'token');
+          
+          final response = await http.post(
+            Uri.parse('https://testing-ads-production.up.railway.app/api/reward'),
+            headers: {'Authorization': 'Bearer $token'},
+          );
+
+          if (response.statusCode == 200) {
+            final data = jsonDecode(response.body);
+            setState(() => _coins = data['coins']);
+          }
+        } catch (error) {
+          print('Error updating rewards: $error');
+        }
+      },
+    );
+  }
+
+  void _showNotifications() {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => ListView.builder(
+        itemCount: _notifications.length,
+        itemBuilder: (context, index) => ListTile(
+          title: Text(_notifications[index]['message']),
+          subtitle: Text(DateTime.parse(_notifications[index]['createdAt'])
+              .toString()),
+        ),
+      ),
+    );
+  }
+
+  void _showLeaderboard() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Leaderboard'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: _leaderboard.length,
+            itemBuilder: (context, index) => ListTile(
+              leading: Text('#${index + 1}'),
+              title: Text('ID: ${_leaderboard[index]['referralCode']}'),
+              trailing: Text('${_leaderboard[index]['coins']} coins'),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _shareApp() {
+    // Implement app sharing functionality
+  }
+
+  void _rateApp() {
+    // Implement app rating functionality
+  }
+
+  @override
+  void dispose() {
+    _bannerAd?.dispose();
+    _rewardedAd?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Dashboard'),
+        actions: [
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Text(
+                '$_coins coins',
+                style: const TextStyle(fontSize: 16),
+              ),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.notifications),
+            onPressed: _showNotifications,
+          ),
+        ],
+      ),
+      drawer: Drawer(
+        child: ListView(
+          children: [
+            DrawerHeader(
+              decoration: BoxDecoration(
+                color: Theme.of(context).primaryColor,
+              ),
+              child: const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  CircleAvatar(
+                    radius: 30,
+                    child: Icon(Icons.person, size: 30),
+                  ),
+                  SizedBox(height: 10),
+                  Text(
+                    'Reward App',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 24,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.leaderboard),
+              title: const Text('Leaderboard'),
+              onTap: () {
+                Navigator.pop(context);
+                _showLeaderboard();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.share),
+              title: const Text('Share App'),
+              onTap: () {
+                Navigator.pop(context);
+                _shareApp();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.star),
+              title: const Text('Rate Us'),
+              onTap: () {
+                Navigator.pop(context);
+                _rateApp();
+              },
+            ),
+          ],
+        ),
+      ),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            ElevatedButton(
+              onPressed: _showRewardedAd,
+              child: const Text('Watch Ad to Earn Coins'),
+            ),
+          ],
+        ),
+      ),
+      bottomNavigationBar: _bannerAd == null
+          ? null
+          : SizedBox(
+              height: _bannerAd!.size.height.toDouble(),
+              width: _bannerAd!.size.width.toDouble(),
+              child: AdWidget(ad: _bannerAd!),
+            ),
+    );
+  }
+}
